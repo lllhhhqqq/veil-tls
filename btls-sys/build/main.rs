@@ -603,17 +603,24 @@ fn ensure_patches_applied(config: &Config) -> io::Result<()> {
         run_command(Command::new("git").arg("init").current_dir(src_path))?;
     }
 
-    println!("cargo:warning=applying post quantum crypto patch to boringssl");
-    apply_patch(config, "boring-pq.patch")?;
-
     println!("cargo:warning=applying patch to boringssl");
     apply_patch(config, "boringssl.patch")?;
 
-    println!("cargo:warning=applying loongarch patch to boringssl");
-    apply_patch(config, "boringssl-loongarch.patch")?;
+    if boringssl_has_loongarch_target_patch(src_path) {
+        println!("cargo:warning=skipping loongarch patch to boringssl, patch already present");
+    } else {
+        println!("cargo:warning=applying loongarch patch to boringssl");
+        apply_patch(config, "boringssl-loongarch.patch")?;
+    }
 
-    println!("cargo:warning=applying windows cross compile patch to boringssl");
-    apply_patch(config, "boringssl-windows.patch")?;
+    if boringssl_has_windows_cross_compile_patch(src_path) {
+        println!(
+            "cargo:warning=skipping windows cross compile patch to boringssl, patch already present"
+        );
+    } else {
+        println!("cargo:warning=applying windows cross compile patch to boringssl");
+        apply_patch(config, "boringssl-windows.patch")?;
+    }
 
     if config.features.underscore_wildcards {
         println!("cargo:warning=applying underscore wildcards patch to boringssl");
@@ -639,6 +646,20 @@ fn boringssl_has_mimic_patch(src_path: &Path) -> bool {
         .is_some_and(|text| text.contains("SSL_CTX_set_record_size_limit"));
 
     has_extension_order && has_record_size_limit && has_record_size_impl
+}
+
+fn boringssl_has_loongarch_target_patch(src_path: &Path) -> bool {
+    let target_header = src_path.join("include").join("openssl").join("target.h");
+    fs::read_to_string(&target_header)
+        .ok()
+        .is_some_and(|text| text.contains("OPENSSL_LOONGARCH64"))
+}
+
+fn boringssl_has_windows_cross_compile_patch(src_path: &Path) -> bool {
+    let fiat_p256 = src_path.join("third_party").join("fiat").join("p256_64.h");
+    fs::read_to_string(&fiat_p256).ok().is_some_and(|text| {
+        text.contains("&& !defined(OPENSSL_WINDOWS)") || text.contains("&& !defined(__MINGW32__)")
+    })
 }
 
 fn apply_patch(config: &Config, patch_name: &str) -> io::Result<()> {

@@ -396,7 +396,11 @@ fn newest_subdir(path: &Path) -> Option<PathBuf> {
         .filter_map(|entry| entry.ok())
         .filter_map(|entry| {
             let is_dir = entry.file_type().ok()?.is_dir();
-            if is_dir { Some(entry.path()) } else { None }
+            if is_dir {
+                Some(entry.path())
+            } else {
+                None
+            }
         })
         .collect::<Vec<_>>();
     dirs.sort();
@@ -433,8 +437,7 @@ fn collect_windows_bindgen_include_dirs() -> Vec<PathBuf> {
                     .and_then(|root| newest_subdir(&root))
             })
             .or_else(|| {
-                let program_files_x86 =
-                    std::env::var_os("ProgramFiles(x86)").map(PathBuf::from)?;
+                let program_files_x86 = std::env::var_os("ProgramFiles(x86)").map(PathBuf::from)?;
                 let root = program_files_x86
                     .join("Microsoft Visual Studio")
                     .join("2022")
@@ -457,9 +460,13 @@ fn collect_windows_bindgen_include_dirs() -> Vec<PathBuf> {
             .map(|p| p.join("Include"))
             .or_else(|| std::env::var_os("UniversalCRTSdkDir").map(PathBuf::from))
             .or_else(|| {
-                let program_files_x86 =
-                    std::env::var_os("ProgramFiles(x86)").map(PathBuf::from)?;
-                Some(program_files_x86.join("Windows Kits").join("10").join("Include"))
+                let program_files_x86 = std::env::var_os("ProgramFiles(x86)").map(PathBuf::from)?;
+                Some(
+                    program_files_x86
+                        .join("Windows Kits")
+                        .join("10")
+                        .join("Include"),
+                )
             });
 
         if let Some(sdk_include_root) = sdk_include_root {
@@ -541,7 +548,10 @@ fn get_extra_clang_args_for_bindgen(config: &Config) -> Vec<String> {
                     "cargo:warning=No Windows include dirs detected for bindgen; MSVC header resolution may fail"
                 );
             } else {
-                if !include_dirs.iter().any(|dir| dir.join("stddef.h").is_file()) {
+                if !include_dirs
+                    .iter()
+                    .any(|dir| dir.join("stddef.h").is_file())
+                {
                     println!(
                         "cargo:warning=Windows include dirs were found, but none contain stddef.h; install Windows SDK/UCRT headers or provide INCLUDE explicitly"
                     );

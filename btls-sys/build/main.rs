@@ -457,8 +457,15 @@ fn ensure_patches_applied(config: &Config) -> io::Result<()> {
         );
     }
 
-    let mut lock_file = LockFile::open(&config.out_dir.join(".patch_lock"))?;
     let src_path = get_boringssl_source_path(config);
+    if boringssl_has_mimic_patch(src_path) {
+        println!(
+            "cargo:warning=skipping git patches application, mimic baseline already contains required patches"
+        );
+        return Ok(());
+    }
+
+    let mut lock_file = LockFile::open(&config.out_dir.join(".patch_lock"))?;
     let has_git = src_path.join(".git").exists();
 
     lock_file.lock()?;
@@ -486,6 +493,24 @@ fn ensure_patches_applied(config: &Config) -> io::Result<()> {
     }
 
     Ok(())
+}
+
+fn boringssl_has_mimic_patch(src_path: &Path) -> bool {
+    let ssl_header = src_path.join("include").join("openssl").join("ssl.h");
+    let tls1_header = src_path.join("include").join("openssl").join("tls1.h");
+    let ssl_lib = src_path.join("ssl").join("ssl_lib.cc");
+
+    let has_extension_order = fs::read_to_string(&ssl_header)
+        .ok()
+        .is_some_and(|text| text.contains("SSL_CTX_set_extension_order"));
+    let has_record_size_limit = fs::read_to_string(&tls1_header)
+        .ok()
+        .is_some_and(|text| text.contains("TLSEXT_TYPE_record_size_limit"));
+    let has_record_size_impl = fs::read_to_string(&ssl_lib)
+        .ok()
+        .is_some_and(|text| text.contains("SSL_CTX_set_record_size_limit"));
+
+    has_extension_order && has_record_size_limit && has_record_size_impl
 }
 
 fn apply_patch(config: &Config, patch_name: &str) -> io::Result<()> {

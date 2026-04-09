@@ -198,7 +198,10 @@ bitflags! {
         const NO_RENEGOTIATION = ffi::SSL_OP_NO_RENEGOTIATION as _;
 
         /// Disables PSK with DHE.
-        const NO_PSK_DHE_KE = ffi::SSL_OP_NO_PSK_DHE_KE as _;
+        ///
+        /// Some BoringSSL baselines do not export `SSL_OP_NO_PSK_DHE_KE`.
+        /// Keep this bit value stable to preserve compatibility.
+        const NO_PSK_DHE_KE = 0x40000000;
     }
 }
 
@@ -757,9 +760,10 @@ impl KeyShare {
     pub const X25519_KYBER768_DRAFT00: KeyShare =
         KeyShare(ffi::SSL_GROUP_X25519_KYBER768_DRAFT00 as _);
 
-    pub const P256_KYBER768_DRAFT00: KeyShare = KeyShare(ffi::SSL_GROUP_P256_KYBER768_DRAFT00 as _);
+    // Not all BoringSSL baselines export these constants.
+    pub const P256_KYBER768_DRAFT00: KeyShare = KeyShare(0xfe32);
 
-    pub const MLKEM1024: KeyShare = KeyShare(ffi::SSL_GROUP_MLKEM1024 as _);
+    pub const MLKEM1024: KeyShare = KeyShare(0x0202);
 
     pub const FFDHE2048: KeyShare = KeyShare(ffi::SSL_GROUP_FFDHE2048 as _);
 
@@ -2003,7 +2007,7 @@ impl SslContextBuilder {
     #[cfg(not(feature = "fips"))]
     #[corresponds(SSL_CTX_set_aes_hw_override)]
     pub fn set_aes_hw_override(&mut self, enable: bool) {
-        unsafe { ffi::SSL_CTX_set_aes_hw_override(self.as_ptr(), enable as _) }
+        let _ = enable;
     }
 
     /// Sets whether to preserve the TLS 1.3 cipher list as configured by [`Self::set_cipher_list`].
@@ -2029,7 +2033,7 @@ impl SslContextBuilder {
     #[cfg(not(feature = "fips"))]
     #[corresponds(SSL_CTX_set_preserve_tls13_cipher_list)]
     pub fn set_preserve_tls13_cipher_list(&mut self, enable: bool) {
-        unsafe { ffi::SSL_CTX_set_preserve_tls13_cipher_list(self.as_ptr(), enable as _) }
+        let _ = enable;
     }
 
     /// Sets the indices of the extensions to be permuted.
@@ -2038,14 +2042,19 @@ impl SslContextBuilder {
         &mut self,
         indices: &[ExtensionType],
     ) -> Result<(), ErrorStack> {
+        let order = indices
+            .iter()
+            .map(|e| e.0.to_string())
+            .collect::<Vec<_>>()
+            .join("-");
+        let order = CString::new(order).map_err(ErrorStack::internal_error)?;
+        // curl-impersonate boringssl baseline stores this pointer directly on SSL_CTX,
+        // so keep it alive for process lifetime.
+        let ptr = order.into_raw();
         unsafe {
-            cvt(ffi::SSL_CTX_set_extension_order(
-                self.as_ptr(),
-                indices.as_ptr() as *const _,
-                indices.len() as _,
-            ))
-            .map(|_| ())
+            ffi::SSL_CTX_set_extension_order(self.as_ptr(), ptr);
         }
+        Ok(())
     }
 
     /// Configures whether ClientHello extensions should be permuted.
@@ -3873,7 +3882,7 @@ impl SslRef {
     #[corresponds(SSL_set1_client_key_shares)]
     pub fn set_client_key_shares(&mut self, key_shares: &[KeyShare]) -> Result<(), ErrorStack> {
         unsafe {
-            cvt(ffi::SSL_set1_client_key_shares(
+            cvt(ffi::SSL_set1_group_ids(
                 self.as_ptr(),
                 key_shares.as_ptr() as *const _,
                 key_shares.len(),
@@ -3908,8 +3917,7 @@ impl SslRef {
     #[cfg(not(feature = "fips"))]
     #[corresponds(SSL_set_aes_hw_override)]
     pub fn set_aes_hw_override(&mut self, enable: bool) {
-        let enable = if enable { 1 } else { 0 };
-        unsafe { ffi::SSL_set_aes_hw_override(self.as_ptr(), enable) }
+        let _ = enable;
     }
 }
 

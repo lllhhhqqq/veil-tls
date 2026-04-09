@@ -1,4 +1,4 @@
 [submodule "btls-sys/deps/boringssl"]
 	path = btls-sys/deps/boringssl
-	url = file:///D:/mitm-rust/third_party/mimic-boringssl
+	url = https://github.com/lllhhhqqq/veil-boringssl.git
 	ignore = dirty

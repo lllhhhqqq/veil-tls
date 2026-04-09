@@ -390,6 +390,102 @@ fn pick_best_android_ndk_toolchain(toolchains_dir: &Path) -> std::io::Result<OsS
     ))
 }
 
+fn newest_subdir(path: &Path) -> Option<PathBuf> {
+    let mut dirs = fs::read_dir(path)
+        .ok()?
+        .filter_map(|entry| entry.ok())
+        .filter_map(|entry| {
+            let is_dir = entry.file_type().ok()?.is_dir();
+            if is_dir { Some(entry.path()) } else { None }
+        })
+        .collect::<Vec<_>>();
+    dirs.sort();
+    dirs.pop()
+}
+
+fn collect_windows_bindgen_include_dirs() -> Vec<PathBuf> {
+    println!("cargo:rerun-if-env-changed=INCLUDE");
+    println!("cargo:rerun-if-env-changed=VCToolsInstallDir");
+    println!("cargo:rerun-if-env-changed=VCINSTALLDIR");
+    println!("cargo:rerun-if-env-changed=WindowsSdkDir");
+    println!("cargo:rerun-if-env-changed=WindowsSDKVersion");
+    println!("cargo:rerun-if-env-changed=UniversalCRTSdkDir");
+    println!("cargo:rerun-if-env-changed=UCRTVersion");
+    println!("cargo:rerun-if-env-changed=ProgramFiles(x86)");
+
+    let mut dirs = Vec::new();
+
+    if let Some(include_paths) = std::env::var_os("INCLUDE") {
+        for include_dir in std::env::split_paths(&include_paths) {
+            if include_dir.is_dir() {
+                dirs.push(include_dir);
+            }
+        }
+    }
+
+    if dirs.is_empty() {
+        let vc_tools = std::env::var_os("VCToolsInstallDir")
+            .map(PathBuf::from)
+            .or_else(|| {
+                std::env::var_os("VCINSTALLDIR")
+                    .map(PathBuf::from)
+                    .map(|p| p.join("Tools").join("MSVC"))
+                    .and_then(|root| newest_subdir(&root))
+            })
+            .or_else(|| {
+                let program_files_x86 =
+                    std::env::var_os("ProgramFiles(x86)").map(PathBuf::from)?;
+                let root = program_files_x86
+                    .join("Microsoft Visual Studio")
+                    .join("2022")
+                    .join("BuildTools")
+                    .join("VC")
+                    .join("Tools")
+                    .join("MSVC");
+                newest_subdir(&root)
+            });
+
+        if let Some(vc_tools) = vc_tools {
+            let vc_include = vc_tools.join("include");
+            if vc_include.is_dir() {
+                dirs.push(vc_include);
+            }
+        }
+
+        let sdk_include_root = std::env::var_os("WindowsSdkDir")
+            .map(PathBuf::from)
+            .map(|p| p.join("Include"))
+            .or_else(|| std::env::var_os("UniversalCRTSdkDir").map(PathBuf::from))
+            .or_else(|| {
+                let program_files_x86 =
+                    std::env::var_os("ProgramFiles(x86)").map(PathBuf::from)?;
+                Some(program_files_x86.join("Windows Kits").join("10").join("Include"))
+            });
+
+        if let Some(sdk_include_root) = sdk_include_root {
+            let sdk_version_dir = std::env::var_os("WindowsSDKVersion")
+                .map(PathBuf::from)
+                .or_else(|| std::env::var_os("UCRTVersion").map(PathBuf::from))
+                .map(|ver| sdk_include_root.join(ver))
+                .filter(|p| p.is_dir())
+                .or_else(|| newest_subdir(&sdk_include_root));
+
+            if let Some(sdk_version_dir) = sdk_version_dir {
+                for leaf in ["ucrt", "shared", "um", "winrt", "cppwinrt"] {
+                    let dir = sdk_version_dir.join(leaf);
+                    if dir.is_dir() {
+                        dirs.push(dir);
+                    }
+                }
+            }
+        }
+    }
+
+    let mut unique = std::collections::HashSet::new();
+    dirs.retain(|path| unique.insert(path.clone()));
+    dirs
+}
+
 fn get_extra_clang_args_for_bindgen(config: &Config) -> Vec<String> {
     let mut params = Vec::new();
 
@@ -431,6 +527,28 @@ fn get_extra_clang_args_for_bindgen(config: &Config) -> Vec<String> {
                 Err(e) => {
                     println!("cargo:warning=failed to find prebuilt Android NDK toolchain for bindgen: {e}");
                     // Uh... let's try anyway, I guess?
+                }
+            }
+        }
+        "windows" => {
+            params.push(format!("--target={}", config.target));
+
+            // When bindgen runs with libclang on Windows/MSVC, it may miss standard
+            // C headers (for example stddef.h). Reuse INCLUDE paths from VS dev env.
+            let include_dirs = collect_windows_bindgen_include_dirs();
+            if include_dirs.is_empty() {
+                println!(
+                    "cargo:warning=No Windows include dirs detected for bindgen; MSVC header resolution may fail"
+                );
+            } else {
+                if !include_dirs.iter().any(|dir| dir.join("stddef.h").is_file()) {
+                    println!(
+                        "cargo:warning=Windows include dirs were found, but none contain stddef.h; install Windows SDK/UCRT headers or provide INCLUDE explicitly"
+                    );
+                }
+                for include_dir in include_dirs {
+                    params.push("-isystem".to_string());
+                    params.push(include_dir.display().to_string());
                 }
             }
         }

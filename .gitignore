@@ -1,0 +1,9 @@
+target/
+Cargo.lock
+.idea/
+*.iml
+.vscode/
+.DS_Store
+.venv
+boring-sys/deps/
+*.py
